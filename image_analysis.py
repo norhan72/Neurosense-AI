@@ -1,703 +1,147 @@
-import streamlit as st
+import os
+import pandas as pd
 from utils import (
-    analyze_results,
-    blury_vision_test,
-    double_vision_test,
-    evaluate_models,
-    get_test_image_paths,
-    get_training_data,
+    evaluate_classifier,
+    build_blur_dataset,
+    build_double_dataset,
+    plot_datasets_visualization,
+    load_models,
     plot_training_data,
-    single_image_test,
-    train_model,
+    train_classifier,
 )
 
-images_folder = "images"
 
-# 1. Train models, evaluate them, and plot the training data before running the tests
-X, y_blur, y_double, df = get_training_data()
-model_blur, model_double, X_test, y_test_blur, y_test_double = train_model(
-    X, y_blur, y_double
-)
-evaluate_models(model_blur, model_double, X_test, y_test_blur, y_test_double)
-plot_training_data(df["blur_errors"], df["double_errors"], y_blur, y_double)
+def run_training(
+    test_size=0.2, random_state=42, n_estimators=10, persist_dir="models", verbose=True
+):
+    if verbose:
+        print("Building dataset from images...")
 
-# 2. Load test images
-images, blur_levels = get_test_image_paths(images_folder)
+    # Build datasets separately
+    if verbose:
+        print("Building blur dataset...")
+    Xb, yb, dfb = build_blur_dataset()
 
-# 3. Run the two vision tests
-st.title("اختبار الاستدراك البصري - AI Model")
-blur_errors = blury_vision_test(st, images, blur_levels)
-double_errors = double_vision_test(st, images)
+    # Visualize blur dataset
+    try:
+        plot_datasets_visualization(dfb, None)
+    except Exception:
+        pass
 
-# 4. Analyze results using trained models
-analyze_results(st, model_blur, model_double, blur_errors, double_errors)
+    if verbose:
+        print(f"Blur dataset: X.shape={Xb.shape}, samples={len(dfb)}")
 
-# 5. Run individual image prediction
-st.header("توقع حالة صورة فردية")
-uploaded_file = st.file_uploader("اختر صورة لتحليلها:", type=["jpg", "png"])
-single_image_test(st, uploaded_file, model_blur, model_double)
+    if verbose:
+        print("Training blur classifier...")
+    blur_model, Xb_test, yb_test = train_classifier(
+        Xb,
+        yb,
+        test_size=test_size,
+        random_state=random_state,
+        n_estimators=n_estimators,
+        persist_path=(
+            os.path.join(persist_dir, "model_blur.joblib") if persist_dir else None
+        ),
+        verbose=verbose,
+    )
+
+    if verbose:
+        print("Evaluating blur classifier...")
+    evaluate_classifier(blur_model, Xb_test, yb_test, name="Blur Model")
+
+    # Double dataset and classifier
+    if verbose:
+        print("Building double dataset...")
+    Xd, yd, dfd, gd = build_double_dataset()
+
+    # Visualize both datasets together (double_df may include blur_errors)
+    try:
+        plot_datasets_visualization(dfb, dfd)
+    except Exception:
+        pass
+
+    if verbose:
+        print(f"Double dataset: X.shape={Xd.shape}, samples={len(dfd)}")
+
+    if verbose:
+        print("Training double classifier...")
+    double_model, Xd_test, yd_test = train_classifier(
+        Xd,
+        yd,
+        test_size=test_size,
+        random_state=random_state,
+        n_estimators=n_estimators,
+        persist_path=(
+            os.path.join(persist_dir, "model_double.joblib") if persist_dir else None
+        ),
+        verbose=verbose,
+        groups=gd,
+    )
+
+    if verbose:
+        print("Evaluating double classifier...")
+    evaluate_classifier(double_model, Xd_test, yd_test, name="Double Model")
+
+    # # Create combined df for plotting (fill missing columns)
+    # try:
+    #     df_combined = pd.concat(
+    #         [
+    #             dfb.reindex(
+    #                 columns=["blur_errors", "double_errors", "has_blur", "has_double"]
+    #             ).fillna({"double_errors": 0, "has_double": 0}),
+    #             dfd.reindex(
+    #                 columns=["blur_errors", "double_errors", "has_blur", "has_double"]
+    #             ).fillna({"blur_errors": 0, "has_blur": 0}),
+    #         ],
+    #         ignore_index=True,
+    #     )
+    #     plot_training_data(
+    #         df_combined["blur_errors"],
+    #         df_combined["double_errors"],
+    #         df_combined.get("has_blur", pd.Series([0] * len(df_combined))),
+    #         df_combined.get("has_double", pd.Series([0] * len(df_combined))),
+    #     )
+    # except Exception:
+    #     print("Exception in plotting training data:", exc_info=True)
+
+    return blur_model, double_model, dfb, dfd
 
 
-# 5. Create dummy image files (for the Streamlit app)
-# create_dummy_image(images_folder, 100, 100, (255, 255, 255))
+# If run as a script (not imported), run training once with defaults
+if __name__ == "__main__":
+    model_blur, model_double = None, None
+    print("Loading trained models...")
+    model_blur, model_double = load_models("models")
+    if not model_blur or not model_double:
+        print("Failed to load models, re-training...")
+        model_blur, model_double, dfb, dfd = run_training()
+    print("Models are ready.")
+    print("Blur Model:", model_blur, "Double Model:", model_double)
 
-# 6. Write the complete Streamlit UI
+    # Even if models are loaded, create dataset visualizations so we can inspect
+    # the training data without forcing a retrain.
+    try:
+        Xb, yb, dfb = build_blur_dataset()
+        Xd, yd, dfd, gd = build_double_dataset()
+        plot_datasets_visualization(dfb, dfd)
+    except Exception:
+        pass
+
+
+# 2. Load blur test images and run the test (not needed)
+# images_folder = "images"
+# blur_images, blur_levels = get_blur_test_image_paths(images_folder + "/blur")
 # st.title("اختبار الاستدراك البصري - AI Model")
+# blur_errors = blury_vision_test(st, blur_images, blur_levels)
 
-# اختبار الضبابية
-# st.header("اختبار 1: الرؤية الضبابية")
-# st.write("اختر الصور الواضحة من المشوشة.")
+# 3. Load double vision test images and run the test (not needed)
+# double_images = get_double_test_image_paths(images_folder + "/double")
+# double_errors = double_vision_test(st, double_images)
 
-# عرض صور (using dummy images created in the notebook)
-# images, blur_levels = get_test_image_paths(images_folder)
-# user_choices_blur = []
+# # 4. Analyze results using trained models
+# analyze_results(st, model_blur, model_double, blur_errors, double_errors)
 
-# for i, img_path in enumerate(images):
-#     img = generate_blurred_image(img_path, blur_levels[i])
-#     if img is not None:  # Check if image was loaded successfully
-#         # Convert BGR image to RGB for Streamlit display
-#         img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-#         st.image(img_rgb, caption=f"صورة {i+1}", width=200)
-#         choice = st.radio(
-#             f"هل هذه الصورة واضحة؟ (صورة {i+1})", ["نعم", "لا"], key=f"blur_{i}"
-#         )
-#         # 1 if the user chose "لا" (No) and the image was intentionally blurred (>1 blur level)
-#         user_choices_blur.append(1 if choice == "لا" and blur_levels[i] > 1 else 0)
-#     else:
-#         st.write(f"Could not load image: {img_path}")
-
-
-# blur_errors = sum(user_choices_blur)
-
-# # اختبار الازدواجية
-# st.header("اختبار 2: الازدواجية في الرؤية")
-# st.write("حدد إذا كانت الصورة تبدو مزدوجة.")
-
-# user_choices_double = []
-# for i, img_path in enumerate(images):
-#     # Generate double vision for images containing 'double' in filename or based on index
-#     is_double_image = (
-#         "double" in img_path.lower() or i % 2 == 1
-#     )  # Condition for double image
-#     img = (
-#         generate_double_vision_image(img_path)
-#         if is_double_image
-#         else cv2.imread(img_path)
-#     )
-
-#     if img is not None:
-#         # Convert BGR image to RGB for Streamlit display
-#         img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-#         st.image(img_rgb, caption=f"صورة {i+1}", width=200)
-#         choice = st.radio(
-#             f"هل هذه الصورة تبدو مزدوجة؟ (صورة {i+1})", ["نعم", "لا"], key=f"double_{i}"
-#         )
-#         # 1 if the user chose "نعم" (Yes) and it was a double image
-#         user_choices_double.append(1 if choice == "نعم" and is_double_image else 0)
-#     else:
-#         st.write(f"Could not load image: {img_path}")
-
-# double_errors = sum(user_choices_double)
-
-# # تحليل باستخدام AI
-# if st.button("احسب النتائج"):
-#     # Ensure input to predict is a 2D array/DataFrame
-#     input_data = pd.DataFrame(
-#         [[blur_errors, double_errors]], columns=["blur_errors", "double_errors"]
-#     )
-#     pred_blur = model_blur.predict(input_data)[0]
-#     pred_double = model_double.predict(input_data)[0]
-
-#     st.subheader("النتائج من النموذج AI:")
-#     if pred_blur == 1:
-#         st.write("احتمال وجود رؤية ضبابية (بناءً على الأخطاء في الاختبار الأول).")
-#     else:
-#         st.write("لا يوجد دليل على رؤية ضبابية.")
-
-#     if pred_double == 1:
-#         st.write(
-#             "احتمال وجود ازدواجية في الرؤية (بناءً على الأخطاء في الاختبار الثاني)."
-#         )
-#     else:
-#         st.write("لا يوجد دليل على ازدواجية في الرؤية.")
-
-#     st.write(f"عدد الأخطاء في اختبار الضبابية: {blur_errors}")
-#     st.write(f"عدد الأخطاء في اختبار الازدواجية: {double_errors}")
-
-
-# # بيانات تدريب افتراضية للنموذج (مثال: نتائج اختبارات سابقة)
-# # X: عدد الأخطاء في الاختبارات، y: وجود مشكلة (0=لا، 1=نعم)
-# data = {
-#     "blur_errors": [0, 1, 2, 3, 4, 5, 1, 2, 3, 0, 1, 2, 4, 5, 3, 2, 1, 0],
-#     "double_errors": [0, 1, 2, 3, 4, 5, 0, 1, 2, 3, 4, 0, 1, 2, 3, 4, 5, 0],
-#     "has_blur": [0, 0, 1, 1, 1, 1, 0, 1, 1, 0, 0, 1, 1, 1, 1, 1, 0, 0],
-#     "has_double": [0, 0, 1, 1, 1, 1, 0, 0, 0, 1, 1, 0, 0, 0, 1, 1, 1, 0],
-# }
-# df = pd.DataFrame(data)
-# X = df[["blur_errors", "double_errors"]]
-# y_blur = df["has_blur"]
-# y_double = df["has_double"]
-
-# # تدريب النماذج
-# X_train, X_test, y_train_blur, y_test_blur = train_test_split(
-#     X, y_blur, test_size=0.2, random_state=42
-# )
-# model_blur = RandomForestClassifier(n_estimators=10, random_state=42)
-# model_blur.fit(X_train, y_train_blur)
-
-# X_train, X_test, y_train_double, y_test_double = train_test_split(
-#     X, y_double, test_size=0.2, random_state=42
-# )
-# model_double = RandomForestClassifier(n_estimators=10, random_state=42)
-# model_double.fit(X_train, y_train_double)
-
-# # واجهة Streamlit
-# st.title("اختبار الاستدراك البصري - AI Model")
-
-# # اختبار الضبابية
-# st.header("اختبار 1: الرؤية الضبابية")
-# st.write("اختر الصور الواضحة من المشوشة.")
-
-# # عرض صور (افتراضية: استخدم صورًا من مجلد 'images'، مثل cat.jpg)
-# images = ["cat.jpg", "dog.jpg", "bird.jpg"]  # استبدل بمسارات صور حقيقية
-# blur_levels = [1, 5, 3]  # Updated to use odd numbers > 0
-
-# user_choices_blur = []
-# for i, img_path in enumerate(images):
-#     img = generate_blurred_image(img_path, blur_levels[i])
-#     if img is not None:  # Check if image was loaded successfully
-#         st.image(img, caption=f"صورة {i+1}", width=200)
-#         choice = st.radio(
-#             f"هل هذه الصورة واضحة؟ (صورة {i+1})", ["نعم", "لا"], key=f"blur_{i}"
-#         )
-#         user_choices_blur.append(
-#             1 if choice == "لا" and blur_levels[i] > 0 else 0
-#         )  # 1 إذا أخطأ
-#     else:
-#         st.write(f"Could not load image: {img_path}")
-
-
-# blur_errors = sum(user_choices_blur)
-
-# # اختبار الازدواجية
-# st.header("اختيار 2: الازدواجية في الرؤية")
-# st.write("حدد إذا كانت الصورة تبدو مزدوجة.")
-
-# user_choices_double = []
-# for i, img_path in enumerate(images):
-#     img = (
-#         generate_double_vision_image(img_path) if i % 2 == 1 else cv2.imread(img_path)
-#     )  # كل صورة ثانية مزدوجة
-#     if img is not None:
-#         st.image(img, caption=f"صورة {i+1}", width=200)
-#         choice = st.radio(
-#             f"هل هذه الصورة تبدو مزدوجة؟ (صورة {i+1})", ["نعم", "لا"], key=f"double_{i}"
-#         )
-#         user_choices_double.append(
-#             1 if choice == "نعم" and i % 2 == 1 else 0
-#         )  # 1 إذا أخطأ
-#     else:
-#         st.write(f"Could not load image: {img_path}")
-
-# double_errors = sum(user_choices_double)
-
-# # تحليل باستخدام AI
-# if st.button("احسب النتائج"):
-#     # Ensure input to predict is a 2D array/DataFrame
-#     input_data = pd.DataFrame(
-#         [[blur_errors, double_errors]], columns=["blur_errors", "double_errors"]
-#     )
-#     pred_blur = model_blur.predict(input_data)[0]
-#     pred_double = model_double.predict(input_data)[0]
-
-#     st.subheader("النتائج من النموذج AI:")
-#     if pred_blur == 1:
-#         st.write("احتمال وجود رؤية ضبابية (بناءً على الأخطاء في الاختبار الأول).")
-#     else:
-#         st.write("لا يوجد دليل على رؤية ضبابية.")
-
-#     if pred_double == 1:
-#         st.write(
-#             "احتمال وجود ازدواجية في الرؤية (بناءً على الأخطاء في الاختبار الثاني)."
-#         )
-#     else:
-#         st.write("لا يوجد دليل على ازدواجية في الرؤية.")
-
-#     st.write(f"عدد الأخطاء في اختبار الضبابية: {blur_errors}")
-#     st.write(f"عدد الأخطاء في اختبار الازدواجية: {double_errors}")
-
-
-# # بيانات تدريب افتراضية للنموذج (مثال: نتائج اختبارات سابقة)
-# # X: عدد الأخطاء في الاختبارات، y: وجود مشكلة (0=لا، 1=نعم)
-# data = {
-#     "blur_errors": [0, 1, 2, 3, 4, 5],
-#     "double_errors": [0, 1, 2, 3, 4, 5],
-#     "has_blur": [0, 0, 1, 1, 1, 1],
-#     "has_double": [0, 0, 1, 1, 1, 1],
-# }
-# df = pd.DataFrame(data)
-# X = df[["blur_errors", "double_errors"]]
-# y_blur = df["has_blur"]
-# y_double = df["has_double"]
-
-# # تدريب النماذج
-# X_train, X_test, y_train_blur, y_test_blur = train_test_split(
-#     X, y_blur, test_size=0.2, random_state=42
-# )
-# model_blur = RandomForestClassifier(n_estimators=10, random_state=42)
-# model_blur.fit(X_train, y_train_blur)
-
-# X_train, X_test, y_train_double, y_test_double = train_test_split(
-#     X, y_double, test_size=0.2, random_state=42
-# )
-# model_double = RandomForestClassifier(n_estimators=10, random_state=42)
-# model_double.fit(X_train, y_train_double)
-
-# # واجهة Streamlit
-# st.title("اختبار الاستدراك البصري - AI Model")
-
-# # اختبار الضبابية
-# st.header("اختبار 1: الرؤية الضبابية")
-# st.write("اختر الصور الواضحة من المشوشة.")
-
-# # عرض صور (افتراضية: استخدم صورًا من مجلد 'images'، مثل cat.jpg)
-# images = ["cat.jpg", "dog.jpg", "bird.jpg"]  # استبدل بمسارات صور حقيقية
-# blur_levels = [1, 5, 3]  # Updated to use odd numbers > 0
-
-# user_choices_blur = []
-# for i, img_path in enumerate(images):
-#     img = generate_blurred_image(img_path, blur_levels[i])
-#     if img is not None:  # Check if image was loaded successfully
-#         st.image(img, caption=f"صورة {i+1}", width=200)
-#         choice = st.radio(
-#             f"هل هذه الصورة واضحة؟ (صورة {i+1})", ["نعم", "لا"], key=f"blur_{i}"
-#         )
-#         user_choices_blur.append(
-#             1 if choice == "لا" and blur_levels[i] > 0 else 0
-#         )  # 1 إذا أخطأ
-#     else:
-#         st.write(f"Could not load image: {img_path}")
-
-
-# blur_errors = sum(user_choices_blur)
-
-# # اختبار الازدواجية
-# st.header("اختيار 2: الازدواجية في الرؤية")
-# st.write("حدد إذا كانت الصورة تبدو مزدوجة.")
-
-# user_choices_double = []
-# for i, img_path in enumerate(images):
-#     img = (
-#         generate_double_vision_image(img_path) if i % 2 == 1 else cv2.imread(img_path)
-#     )  # كل صورة ثانية مزدوجة
-#     if img is not None:
-#         st.image(img, caption=f"صورة {i+1}", width=200)
-#         choice = st.radio(
-#             f"هل هذه الصورة تبدو مزدوجة؟ (صورة {i+1})", ["نعم", "لا"], key=f"double_{i}"
-#         )
-#         user_choices_double.append(
-#             1 if choice == "نعم" and i % 2 == 1 else 0
-#         )  # 1 إذا أخطأ
-#     else:
-#         st.write(f"Could not load image: {img_path}")
-
-# double_errors = sum(user_choices_double)
-
-# # تحليل باستخدام AI
-# if st.button("احسب النتائج"):
-#     # Ensure input to predict is a 2D array/DataFrame
-#     input_data = pd.DataFrame(
-#         [[blur_errors, double_errors]], columns=["blur_errors", "double_errors"]
-#     )
-#     pred_blur = model_blur.predict(input_data)[0]
-#     pred_double = model_double.predict(input_data)[0]
-
-#     st.subheader("النتائج من النموذج AI:")
-#     if pred_blur == 1:
-#         st.write("احتمال وجود رؤية ضبابية (بناءً على الأخطاء في الاختبار الأول).")
-#     else:
-#         st.write("لا يوجد دليل على رؤية ضبابية.")
-
-#     if pred_double == 1:
-#         st.write(
-#             "احتمال وجود ازدواجية في الرؤية (بناءً على الأخطاء في الاختبار الثاني)."
-#         )
-#     else:
-#         st.write("لا يوجد دليل على ازدواجية في الرؤية.")
-
-#     st.write(f"عدد الأخطاء في اختبار الضبابية: {blur_errors}")
-#     st.write(f"عدد الأخطاء في اختبار الازدواجية: {double_errors}")
-
-
-# # Create a scatter plot of the training data
-# plt.figure(figsize=(10, 6))
-
-# # Plot data points for 'has_blur'
-# plt.scatter(
-#     df["blur_errors"],
-#     df["double_errors"],
-#     c=df["has_blur"],
-#     cmap="viridis",
-#     label="Has Blur (1=Yes, 0=No)",
-# )
-
-# # Add labels and title
-# plt.xlabel("Blur Errors")
-# plt.ylabel("Double Errors")
-# plt.title("Training Data Visualization")
-# plt.legend()
-# plt.grid(True)
-# plt.show()
-
-# plt.figure(figsize=(10, 6))
-# # Plot data points for 'has_double'
-# plt.scatter(
-#     df["blur_errors"],
-#     df["double_errors"],
-#     c=df["has_double"],
-#     cmap="plasma",
-#     label="Has Double Vision (1=Yes, 0=No)",
-# )
-
-# # Add labels and title
-# plt.xlabel("Blur Errors")
-# plt.ylabel("Double Errors")
-# plt.title("Training Data Visualization (Double Vision)")
-# plt.legend()
-# plt.grid(True)
-# plt.show()
-
-# # بيانات تدريب افتراضية للنموذج (مثال: نتائج اختبارات سابقة)
-# # X: عدد الأخطاء في الاختبارات، y: وجود مشكلة (0=لا، 1=نعم)
-# data = {
-#     "blur_errors": [0, 1, 2, 3, 4, 5],
-#     "double_errors": [0, 1, 2, 3, 4, 5],
-#     "has_blur": [0, 0, 1, 1, 1, 1],
-#     "has_double": [0, 0, 1, 1, 1, 1],
-# }
-# df = pd.DataFrame(data)
-# X = df[["blur_errors", "double_errors"]]
-# y_blur = df["has_blur"]
-# y_double = df["has_double"]
-
-
-# # تدريب النماذج
-# X_train, X_test, y_train_blur, y_test_blur = train_test_split(
-#     X, y_blur, test_size=0.2, random_state=42
-# )
-# model_blur = RandomForestClassifier(n_estimators=10, random_state=42)
-# model_blur.fit(X_train, y_train_blur)
-
-# X_train, X_test, y_train_double, y_test_double = train_test_split(
-#     X, y_double, test_size=0.2, random_state=42
-# )
-# model_double = RandomForestClassifier(n_estimators=10, random_state=42)
-# model_double.fit(X_train, y_train_double)
-
-
-# # واجهة Streamlit
-# st.title("اختبار الاستدراك البصري - AI Model")
-
-
-# # اختبار الضبابية
-# st.header("اختبار 1: الرؤية الضبابية")
-# st.write("اختر الصور الواضحة من المشوشة.")
-
-# # عرض صور (افتراضية: استخدم صورًا من مجلد 'images'، مثل cat.jpg)
-# images = ["cat.jpg", "dog.jpg", "bird.jpg"]  # استبدل بمسارات صور حقيقية
-# blur_levels = [1, 5, 3]  # 0=واضح، 5=مشوش
-
-# user_choices_blur = []
-# for i, img_path in enumerate(images):
-#     img = generate_blurred_image(img_path, blur_levels[i])
-#     if img is not None:  # Check if image was loaded successfully
-#         st.image(img, caption=f"صورة {i+1}", width=200)
-#         choice = st.radio(
-#             f"هل هذه الصورة واضحة؟ (صورة {i+1})", ["نعم", "لا"], key=f"blur_{i}"
-#         )
-#         user_choices_blur.append(
-#             1 if choice == "لا" and blur_levels[i] > 0 else 0
-#         )  # 1 إذا أخطأ
-#     else:
-#         print(f"Skipping image {img_path} due to loading error.")
-
-
-# blur_errors = sum(user_choices_blur)
-
-# # بيانات تدريب افتراضية للنموذج (مثال: نتائج اختبارات سابقة)
-# # X: عدد الأخطاء في الاختبارات، y: وجود مشكلة (0=لا، 1=نعم)
-# data = {
-#     "blur_errors": [0, 1, 2, 3, 4, 5],
-#     "double_errors": [0, 1, 2, 3, 4, 5],
-#     "has_blur": [0, 0, 1, 1, 1, 1],
-#     "has_double": [0, 0, 1, 1, 1, 1],
-# }
-# df = pd.DataFrame(data)
-# X = df[["blur_errors", "double_errors"]]
-# y_blur = df["has_blur"]
-# y_double = df["has_double"]
-
-# # تدريب النماذج
-# X_train, X_test, y_train_blur, y_test_blur = train_test_split(
-#     X, y_blur, test_size=0.2, random_state=42
-# )
-# model_blur = RandomForestClassifier(n_estimators=10, random_state=42)
-# model_blur.fit(X_train, y_train_blur)
-
-# X_train, X_test, y_train_double, y_test_double = train_test_split(
-#     X, y_double, test_size=0.2, random_state=42
-# )
-# model_double = RandomForestClassifier(n_estimators=10, random_state=42)
-# model_double.fit(X_train, y_train_double)
-
-# # واجهة Streamlit
-# st.title("اختبار الاستدراك البصري - AI Model")
-
-# # اختبار الضبابية
-# st.header("اختبار 1: الرؤية الضبابية")
-# st.write("اختر الصور الواضحة من المشوشة.")
-
-# # عرض صور (افتراضية: استخدم صورًا من مجلد 'images'، مثل cat.jpg)
-# images = ["cat.jpg", "dog.jpg", "bird.jpg"]  # استبدل بمسارات صور حقيقية
-# blur_levels = [1, 5, 3]  # Updated to use odd numbers > 0
-
-# user_choices_blur = []
-# for i, img_path in enumerate(images):
-#     img = generate_blurred_image(img_path, blur_levels[i])
-#     if img is not None:  # Check if image was loaded successfully
-#         st.image(img, caption=f"صورة {i+1}", width=200)
-#         choice = st.radio(
-#             f"هل هذه الصورة واضحة؟ (صورة {i+1})", ["نعم", "لا"], key=f"blur_{i}"
-#         )
-#         user_choices_blur.append(
-#             1 if choice == "لا" and blur_levels[i] > 0 else 0
-#         )  # 1 إذا أخطأ
-#     else:
-#         st.write(f"Could not load image: {img_path}")
-
-
-# blur_errors = sum(user_choices_blur)
-
-# # اختبار الازدواجية
-# st.header("اختيار 2: الازدواجية في الرؤية")
-# st.write("حدد إذا كانت الصورة تبدو مزدوجة.")
-
-# user_choices_double = []
-# for i, img_path in enumerate(images):
-#     img = (
-#         generate_double_vision_image(img_path) if i % 2 == 1 else cv2.imread(img_path)
-#     )  # كل صورة ثانية مزدوجة
-#     if img is not None:
-#         st.image(img, caption=f"صورة {i+1}", width=200)
-#         choice = st.radio(
-#             f"هل هذه الصورة تبدو مزدوجة؟ (صورة {i+1})", ["نعم", "لا"], key=f"double_{i}"
-#         )
-#         user_choices_double.append(
-#             1 if choice == "نعم" and i % 2 == 1 else 0
-#         )  # 1 إذا أخطأ
-#     else:
-#         st.write(f"Could not load image: {img_path}")
-
-# double_errors = sum(user_choices_double)
-
-# # تحليل باستخدام AI
-# if st.button("احسب النتائج"):
-#     # Ensure input to predict is a 2D array/DataFrame
-#     input_data = pd.DataFrame(
-#         [[blur_errors, double_errors]], columns=["blur_errors", "double_errors"]
-#     )
-#     pred_blur = model_blur.predict(input_data)[0]
-#     pred_double = model_double.predict(input_data)[0]
-
-#     st.subheader("النتائج من النموذج AI:")
-#     if pred_blur == 1:
-#         st.write("احتمال وجود رؤية ضبابية (بناءً على الأخطاء في الاختبار الأول).")
-#     else:
-#         st.write("لا يوجد دليل على رؤية ضبابية.")
-
-#     if pred_double == 1:
-#         st.write(
-#             "احتمال وجود ازدواجية في الرؤية (بناءً على الأخطاء في الاختبار الثاني)."
-#         )
-#     else:
-#         st.write("لا يوجد دليل على ازدواجية في الرؤية.")
-
-#     st.write(f"عدد الأخطاء في اختبار الضبابية: {blur_errors}")
-#     st.write(f"عدد الأخطاء في اختبار الازدواجية: {double_errors}")
-
-
-# # بيانات تدريب افتراضية للنموذج (مثال: نتائج اختبارات سابقة)
-# # X: عدد الأخطاء في الاختبارات، y: وجود مشكلة (0=لا، 1=نعم)
-# data = {
-#     "blur_errors": [0, 1, 2, 3, 4, 5, 1, 2, 3, 0, 1, 2, 4, 5, 3, 2, 1, 0],
-#     "double_errors": [0, 1, 2, 3, 4, 5, 0, 1, 2, 3, 4, 0, 1, 2, 3, 4, 5, 0],
-#     "has_blur": [0, 0, 1, 1, 1, 1, 0, 1, 1, 0, 0, 1, 1, 1, 1, 1, 0, 0],
-#     "has_double": [0, 0, 1, 1, 1, 1, 0, 0, 0, 1, 1, 0, 0, 0, 1, 1, 1, 0],
-# }
-# df = pd.DataFrame(data)
-# X = df[["blur_errors", "double_errors"]]
-# y_blur = df["has_blur"]
-# y_double = df["has_double"]
-
-# # تدريب النماذج
-# X_train, X_test, y_train_blur, y_test_blur = train_test_split(
-#     X, y_blur, test_size=0.2, random_state=42
-# )
-# model_blur = RandomForestClassifier(n_estimators=10, random_state=42)
-# model_blur.fit(X_train, y_train_blur)
-
-# X_train, X_test, y_train_double, y_test_double = train_test_split(
-#     X, y_double, test_size=0.2, random_state=42
-# )
-# model_double = RandomForestClassifier(n_estimators=10, random_state=42)
-# model_double.fit(X_train, y_train_double)
-
-# # واجهة Streamlit
-# st.title("اختبار الاستدراك البصري - AI Model")
-
-# # اختبار الضبابية
-# st.header("اختبار 1: الرؤية الضبابية")
-# st.write("اختر الصور الواضحة من المشوشة.")
-
-# # عرض صور (افتراضية: استخدم صورًا من مجلد 'images'، مثل cat.jpg)
-# images = ["cat.jpg", "dog.jpg", "bird.jpg"]  # استبدل بمسارات صور حقيقية
-# blur_levels = [1, 5, 3]  # Updated to use odd numbers > 0
-
-# user_choices_blur = []
-# for i, img_path in enumerate(images):
-#     img = generate_blurred_image(img_path, blur_levels[i])
-#     if img is not None:  # Check if image was loaded successfully
-#         st.image(img, caption=f"صورة {i+1}", width=200)
-#         choice = st.radio(
-#             f"هل هذه الصورة واضحة؟ (صورة {i+1})", ["نعم", "لا"], key=f"blur_{i}"
-#         )
-#         user_choices_blur.append(
-#             1 if choice == "لا" and blur_levels[i] > 0 else 0
-#         )  # 1 إذا أخطأ
-#     else:
-#         st.write(f"Could not load image: {img_path}")
-
-
-# blur_errors = sum(user_choices_blur)
-
-# # اختبار الازدواجية
-# st.header("اختيار 2: الازدواجية في الرؤية")
-# st.write("حدد إذا كانت الصورة تبدو مزدوجة.")
-
-# user_choices_double = []
-# for i, img_path in enumerate(images):
-#     img = (
-#         generate_double_vision_image(img_path) if i % 2 == 1 else cv2.imread(img_path)
-#     )  # كل صورة ثانية مزدوجة
-#     if img is not None:
-#         st.image(img, caption=f"صورة {i+1}", width=200)
-#         choice = st.radio(
-#             f"هل هذه الصورة تبدو مزدوجة؟ (صورة {i+1})", ["نعم", "لا"], key=f"double_{i}"
-#         )
-#         user_choices_double.append(
-#             1 if choice == "نعم" and i % 2 == 1 else 0
-#         )  # 1 إذا أخطأ
-#     else:
-#         st.write(f"Could not load image: {img_path}")
-
-# double_errors = sum(user_choices_double)
-
-# # تحليل باستخدام AI
-# if st.button("احسب النتائج"):
-#     # Ensure input to predict is a 2D array/DataFrame
-#     input_data = pd.DataFrame(
-#         [[blur_errors, double_errors]], columns=["blur_errors", "double_errors"]
-#     )
-#     pred_blur = model_blur.predict(input_data)[0]
-#     pred_double = model_double.predict(input_data)[0]
-
-#     st.subheader("النتائج من النموذج AI:")
-#     if pred_blur == 1:
-#         st.write("احتمال وجود رؤية ضبابية (بناءً على الأخطاء في الاختبار الأول).")
-#     else:
-#         st.write("لا يوجد دليل على رؤية ضبابية.")
-
-#     if pred_double == 1:
-#         st.write(
-#             "احتمال وجود ازدواجية في الرؤية (بناءً على الأخطاء في الاختبار الثاني)."
-#         )
-#     else:
-#         st.write("لا يوجد دليل على ازدواجية في الرؤية.")
-
-#     st.write(f"عدد الأخطاء في اختبار الضبابية: {blur_errors}")
-#     st.write(f"عدد الأخطاء في اختبار الازدواجية: {double_errors}")
-
-# # New section for individual image prediction
+# # 5. Run individual image prediction
 # st.header("توقع حالة صورة فردية")
 # uploaded_file = st.file_uploader("اختر صورة لتحليلها:", type=["jpg", "png"])
-
-# if uploaded_file is not None:
-#     # Read the uploaded image
-#     file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
-#     img = cv2.imdecode(file_bytes, 1)
-
-#     st.image(img, caption="الصورة المحملة", width=200)
-
-#     # Perform predictions (using dummy error counts for now)
-#     # In a real application, you would analyze the image content to get these errors
-#     # For demonstration, we'll use placeholder values
-#     image_blur_errors = 2  # Replace with actual image analysis result
-#     image_double_errors = 3  # Replace with actual image analysis result
-
-#     input_data_single = pd.DataFrame(
-#         [[image_blur_errors, image_double_errors]],
-#         columns=["blur_errors", "double_errors"],
-#     )
-#     pred_blur_single = model_blur.predict(input_data_single)[0]
-#     pred_double_single = model_double.predict(input_data_single)[0]
-
-#     st.subheader("نتائج التوقع للصورة:")
-#     if pred_blur_single == 1:
-#         st.write("احتمال وجود رؤية ضبابية في هذه الصورة.")
-#     else:
-#         st.write("لا يوجد دليل على رؤية ضبابية في هذه الصورة.")
-
-#     if pred_double_single == 1:
-#         st.write("احتمال وجود ازدواجية في الرؤية في هذه الصورة.")
-#     else:
-#         st.write("لا يوجد دليل على ازدواجية في الرؤية في هذه الصورة.")
-
-
-# # اختبار الازدواجية
-# st.header("اختبار 2: الازدواجية في الرؤية")
-# st.write("حدد إذا كانت الصورة تبدو مزدوجة.")
-
-
-# user_choices_double = []
-# for i, img_path in enumerate(images):
-#     img = (
-#         generate_double_vision_image(img_path) if i % 2 == 1 else cv2.imread(img_path)
-#     )  # كل صورة ثانية مزدوجة
-#     st.image(img, caption=f"صورة {i+1}", width=200)
-#     choice = st.radio(
-#         f"هل هذه الصورة تبدو مزدوجة؟ (صورة {i+1})", ["نعم", "لا"], key=f"double_{i}"
-#     )
-#     user_choices_double.append(1 if choice == "نعم" and i % 2 == 1 else 0)  # 1 إذا أخطأ
-
-# double_errors = sum(user_choices_double)
-
-# # تحليل باستخدام AI
-# if st.button("احسب النتائج"):
-#     pred_blur = model_blur.predict([[blur_errors, double_errors]])[0]
-#     pred_double = model_double.predict([[blur_errors, double_errors]])[0]
-
-#     st.subheader("النتائج من النموذج AI:")
-#     if pred_blur == 1:
-#         st.write("احتمال وجود رؤية ضبابية (بناءً على الأخطاء في الاختبار الأول).")
-#     else:
-#         st.write("لا يوجد دليل على رؤية ضبابية.")
-
-#     if pred_double == 1:
-#         st.write(
-#             "احتمال وجود ازدواجية في الرؤية (بناءً على الأخطاء في الاختبار الثاني)."
-#         )
-#     else:
-#         st.write("لا يوجد دليل على ازدواجية في الرؤية.")
-
-#     st.write(f"عدد الأخطاء في اختبار الضبابية: {blur_errors}")
-#     st.write(f"عدد الأخطاء في اختبار الازدواجية: {double_errors}")
+# single_image_test(st, uploaded_file, model_blur, model_double)

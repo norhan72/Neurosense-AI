@@ -8,3 +8,5 @@ flask
 streamlit
 librosa
 google-cloud-speech
+joblib
+tensorflow
