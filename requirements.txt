@@ -4,9 +4,10 @@ numpy
 pandas
 matplotlib
 pyngrok
-flask
 streamlit
 librosa
 google-cloud-speech
 joblib
 tensorflow
+fastapi[standard]
+pydantic
