@@ -3,7 +3,6 @@ import glob
 import json
 import joblib
 import numpy as np
-from pyparsing import lru_cache
 from sklearn.ensemble import IsolationForest
 from sklearn.neighbors import LocalOutlierFactor
 from sklearn.svm import OneClassSVM
@@ -11,8 +10,8 @@ from sklearn.preprocessing import RobustScaler
 
 
 class MotionTest:
-    def __init__(self, data_folder="data/samples", contamination=0.09, random_seed=42):
-        self.data_folder = data_folder
+    def __init__(self, contamination=0.09, random_seed=42):
+        self.data_folder = os.path.join(os.getcwd(), "data", "motion")
         self.contamination = contamination
         self.random_seed = random_seed
         self.pipeline = {}
@@ -58,7 +57,6 @@ class MotionTest:
         return float(np.max(v) - np.min(v))
 
     @staticmethod
-    @lru_cache(256)
     def _dominant_freq(v, t):
         if len(v) < 4:
             return 0.0

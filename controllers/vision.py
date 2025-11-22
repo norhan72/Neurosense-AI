@@ -4,8 +4,8 @@ import random
 
 
 class VisionTest:
-    def __init__(self, images_folder, max_attempts=5):
-        self.images_folder = images_folder
+    def __init__(self, max_attempts=5):
+        self.images_folder = os.path.join(os.getcwd(), "data", "vision")
         self.images = []  # list of (image_name, difficulty)
         self.attempts = []
         self.max_attempts = max_attempts

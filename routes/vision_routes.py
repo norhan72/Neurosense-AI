@@ -16,7 +16,7 @@ class VisionAnswer(BaseModel):
 @router.get("/start")
 def start():
     session_id = str(uuid.uuid4())
-    test = VisionTest("data/vision")
+    test = VisionTest()
     sessions[session_id] = test
     return test.next_step()
 

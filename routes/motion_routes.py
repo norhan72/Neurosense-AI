@@ -1,10 +1,10 @@
 from fastapi import APIRouter, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import JSONResponse
 from controllers.motion import MotionTest
 
 
 router = APIRouter()
-test = MotionTest("data/motion")
+test = MotionTest()
 
 
 @router.post("/analyze")
