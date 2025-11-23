@@ -26,6 +26,7 @@ class SpeechTest:
         os.makedirs(self.DATA_DIR, exist_ok=True)
         os.makedirs(self.HEALTHY_DIR, exist_ok=True)
         self.whisper_model = None
+        self._train()
         self.clf, self.scaler = self._load_model_and_scaler()
 
     def _transcribe_with_timestamps(self, audio_path):
@@ -181,9 +182,17 @@ class SpeechTest:
     def _train(self, min_samples=5):
         df, X = self._load_features_matrix()
         if df is None or len(df) < min_samples:
-            raise RuntimeError(
-                f"Need at least {min_samples} healthy samples to train. Have: {0 if df is None else len(df)}"
-            )
+            if os.path.exists(self.HEALTHY_DIR):
+                for fname in os.listdir(self.HEALTHY_DIR):
+                    fp = os.path.join(self.HEALTHY_DIR, fname)
+                    try:
+                        with open(fp, "rb") as f:
+                            data = f.read()
+                        feats = self._extract_features_from_bytes(data)
+                        feats["file"] = fname
+                        self._save_feature_row(feats)
+                    except Exception:
+                        continue
         scaler = StandardScaler().fit(X)
         Xs = scaler.transform(X)
         clf = IsolationForest(n_estimators=200, contamination=0.05, random_state=42)
@@ -216,8 +225,11 @@ class SpeechTest:
         x = np.array([feats.get(c, 0.0) for c in num_cols], dtype=float).reshape(1, -1)
         x_scaled = scaler.transform(x)
         score = -float(clf.decision_function(x_scaled)[0])
-        label = "suspected" if score > 0.5 else "normal"
-        return {"score": score, "label": label}
+        if score > 0.5:
+            label_en, label_ar = "suspected", "محتمل"
+        else:
+            label_en, label_ar = "normal", "طبيعي"
+        return {"score": score, "label_en": label_en, "label_ar": label_ar}
 
     def save_healthy_sample(self, data_bytes, file_name):
         fname = file_name or f"healthy_{np.random.randint(1e6)}.wav"

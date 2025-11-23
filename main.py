@@ -7,6 +7,16 @@ from routes.speech_routes import router as speech_router
 
 app = FastAPI()
 
+from fastapi.middleware.cors import CORSMiddleware
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 # Register APIs
 app.include_router(vision_router, prefix="/vision", tags=["Vision Test"])
 app.include_router(motion_router, prefix="/motion", tags=["Motion Test"])

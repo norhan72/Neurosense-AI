@@ -59,23 +59,24 @@ class VisionTest:
 
     def classify_result(self, threshold):
         if threshold < 0.25:
-            return "Excellent vision"
+            return "Excellent vision", "رؤية ممتازة"
         if threshold < 0.5:
-            return "Good vision"
+            return "Good vision", "رؤية جيدة"
         if threshold < 0.7:
-            return "Moderate vision"
+            return "Moderate vision", "رؤية متوسطة"
         if threshold < 0.85:
-            return "Weak vision"
-        return "Severe vision impairment"
+            return "Weak vision", "رؤية ضعيفة"
+        return "Severe vision impairment", "ضعف شديد في الرؤية"
 
     def next_step(self):
         if len(self.attempts) >= self.max_attempts:
             threshold = self.compute_threshold()
-            label = self.classify_result(threshold)
+            label_en, label_ar = self.classify_result(threshold)
             return {
                 "status": "finished",
                 "vision_score": threshold,
-                "interpretation": label,
+                "interpretation_en": label_en,
+                "interpretation_ar": label_ar,
             }
 
         if len(self.attempts) == 0:

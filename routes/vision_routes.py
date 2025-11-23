@@ -18,7 +18,9 @@ def start():
     session_id = str(uuid.uuid4())
     test = VisionTest()
     sessions[session_id] = test
-    return test.next_step()
+    result = test.next_step()
+    result.update({"session_id": session_id})
+    return result
 
 
 @router.post("/answer")
