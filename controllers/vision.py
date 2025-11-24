@@ -74,9 +74,9 @@ class VisionTest:
             label_en, label_ar = self.classify_result(threshold)
             return {
                 "status": "finished",
-                "vision_score": threshold,
-                "interpretation_en": label_en,
-                "interpretation_ar": label_ar,
+                "score": threshold,
+                "label_en": label_en,
+                "label_ar": label_ar,
             }
 
         if len(self.attempts) == 0:
@@ -84,13 +84,13 @@ class VisionTest:
             return {"status": "continue", "difficulty": next_diff, "image": next_img}
 
         # adaptive difficulty logic
-        last_difficulty, seen = self.attempts[-1]
-        target = 0.0
+        # last_difficulty, seen = self.attempts[-1]
+        # target = 0.0
 
-        if seen:
-            target = min(last_difficulty + 0.15, 1.0)
-        else:
-            target = max(last_difficulty - 0.15, 0.0)
+        # if seen:
+        #     target = min(last_difficulty + 0.15, 1.0)
+        # else:
+        #     target = max(last_difficulty - 0.15, 0.0)
 
-        next_img, next_diff = self.get_random_image(target)
+        next_img, next_diff = self.get_random_image()
         return {"status": "continue", "difficulty": next_diff, "image": next_img}

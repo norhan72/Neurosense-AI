@@ -98,7 +98,6 @@ class MotionTest:
         accel_mag = np.sqrt(ax**2 + ay**2 + az**2)
         gyro_mag = np.sqrt(alpha**2 + beta**2 + gamma**2)
 
-        # Existing features
         features = {
             "std_ax": self._std(ax),
             "std_ay": self._std(ay),
@@ -115,7 +114,6 @@ class MotionTest:
             "dom_freq_accel": self._dominant_freq(accel_mag, t),
         }
 
-        # --- New features ---
         features.update(
             {
                 "jerk_accel": self._jerk(accel_mag, t),
@@ -250,7 +248,7 @@ class MotionTest:
 
         # TODO: save best model
         best_model, best_score = self._get_best_model(results)
-        self.pipeline["model"] = best_model
+        self.pipeline["model"] = results[best_model]["model"]
         self.pipeline["train_scores"] = best_score
 
     def _get_interpretation(self, score, lang="en"):
@@ -294,11 +292,11 @@ class MotionTest:
             )
 
         result = {
-            "msLikelihoodPercent": round(ms_likelihood, 2),
+            "ms_likelihood": ms_likelihood,
             "features": features,
-            "anomaly_raw": float(score),
-            "interpretation_en": self._get_interpretation(ms_likelihood),
-            "interpretation_ar": self._get_interpretation(ms_likelihood, "ar"),
+            "score": float(score),
+            "label_en": self._get_interpretation(score),
+            "label_ar": self._get_interpretation(score, "ar"),
         }
         return result
 

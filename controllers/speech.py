@@ -225,10 +225,10 @@ class SpeechTest:
         x = np.array([feats.get(c, 0.0) for c in num_cols], dtype=float).reshape(1, -1)
         x_scaled = scaler.transform(x)
         score = -float(clf.decision_function(x_scaled)[0])
-        if score > 0.5:
-            label_en, label_ar = "suspected", "محتمل"
+        if score > 0.25:
+            label_en, label_ar = "Suspected", "محتمل"
         else:
-            label_en, label_ar = "normal", "طبيعي"
+            label_en, label_ar = "Normal", "طبيعي"
         return {"score": score, "label_en": label_en, "label_ar": label_ar}
 
     def save_healthy_sample(self, data_bytes, file_name):
