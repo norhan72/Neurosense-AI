@@ -50,7 +50,7 @@ class VisionTest:
         blurs = [d for (d, s) in self.attempts if not s]
 
         if not clears or not blurs:
-            return None
+            return 0
 
         last_clear = max(clears)
         first_blur = min(blurs)

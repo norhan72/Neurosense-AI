@@ -8,6 +8,8 @@ streamlit
 librosa
 google-cloud-speech
 joblib
-tensorflow
 fastapi[standard]
 pydantic
+praat-parselmouth
+faster-whisper
+ffmpeg-python

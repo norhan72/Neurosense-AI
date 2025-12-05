@@ -12,6 +12,7 @@ from faster_whisper import WhisperModel
 from sklearn.ensemble import IsolationForest
 from sklearn.preprocessing import StandardScaler
 from joblib import dump, load
+import subprocess
 
 
 class SpeechTest:
@@ -47,14 +48,81 @@ class SpeechTest:
         return SequenceMatcher(None, expected, actual).ratio()
 
     def _load_audio_bytes(self, data):
-        """Load bytes (wav blob) into numpy array using librosa (expects WAV or common)."""
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+        """Load bytes (audio blob) into numpy array robustly.
+        Handles WAV and common formats; falls back to ffmpeg conversion for browser-recorded types (webm/ogg).
+        Returns 1D float32 numpy array resampled to self.sr.
+        """
+        # write raw bytes to a temp file
+        with tempfile.NamedTemporaryFile(suffix="", delete=False) as tmp:
             tmp.write(data)
             tmp.flush()
             tmp_path = tmp.name
-        y, _ = librosa.load(tmp_path, sr=self.sr)
-        os.remove(tmp_path)
-        return y
+
+        wav_tmp = None
+        try:
+            # 1) Try soundfile (works well for WAV/FLAC etc.)
+            try:
+                y, sr = sf.read(tmp_path, dtype="float32")
+                # make mono if necessary
+                if isinstance(y, np.ndarray) and y.ndim > 1:
+                    y = np.mean(y, axis=1)
+                # resample if samplerate differs
+                if sr != self.sr:
+                    y = librosa.resample(
+                        y.astype(np.float32), orig_sr=sr, target_sr=self.sr
+                    )
+                return y.astype(np.float32)
+            except Exception:
+                # 2) Try librosa (uses audioread/ffmpeg backend if available)
+                try:
+                    y, _ = librosa.load(tmp_path, sr=self.sr, mono=True)
+                    return y.astype(np.float32)
+                except Exception:
+                    # 3) Final fallback: attempt ffmpeg conversion to WAV and read that
+                    wav_tmp = os.path.join(
+                        tempfile.gettempdir(), f"tmp_conv_{uuid.uuid4().hex}.wav"
+                    )
+                    ffmpeg_cmd = [
+                        "ffmpeg",
+                        "-y",
+                        "-i",
+                        tmp_path,
+                        "-ar",
+                        str(self.sr),
+                        "-ac",
+                        "1",
+                        wav_tmp,
+                    ]
+                    try:
+                        subprocess.run(
+                            ffmpeg_cmd,
+                            check=True,
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL,
+                        )
+                        y, sr = sf.read(wav_tmp, dtype="float32")
+                        if isinstance(y, np.ndarray) and y.ndim > 1:
+                            y = np.mean(y, axis=1)
+                        return y.astype(np.float32)
+                    except FileNotFoundError:
+                        # ffmpeg not installed
+                        raise RuntimeError(
+                            "Unable to decode audio: ffmpeg not found. Install ffmpeg or send WAV/PCM audio."
+                        )
+                    except Exception as e:
+                        raise RuntimeError(f"Unable to decode audio: {e}")
+        finally:
+            # cleanup temp files
+            try:
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+            except Exception:
+                pass
+            try:
+                if wav_tmp and os.path.exists(wav_tmp):
+                    os.remove(wav_tmp)
+            except Exception:
+                pass
 
     def _safe_write_temp_audio(self, data_array):
         """Write numpy audio to a temp wav file and return path (safe on Windows). Expects 1D ndarray."""
