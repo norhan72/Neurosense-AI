@@ -88,8 +88,8 @@ Response:
 }
 ```
 
-- `vision_score` (0–100, higher is better) is the percentile against a normal population.
-- Labels by percentile: Normal (≥ 25), Borderline (10–25), Mild impairment (3–10), Significant impairment (< 3).
+- `vision_score` (0–100, higher is better) is the percentile against normal observers answering the **same items**: the share of normal observers who would score lower (ties count half). It is computed exactly by enumerating every possible answer pattern.
+- Labels by percentile: Normal (≥ 15), Borderline (5–15), Mild impairment (1–5), Significant impairment (< 1).
 - Distortion types, each with the symptom it relates to: `none` (control), `blur` (optic neuritis), `contrast` (reduced contrast sensitivity), `double` (diplopia/INO), `fog` (hazy vision), `desaturation` (colour vision loss).
 - Every evaluation is appended to `data/vision/responses.jsonl`, so item difficulties can be recalibrated from real users later.
 
@@ -157,5 +157,5 @@ How the fields are computed:
 ## Limitations
 
 - **Vision norms are model-based.** Item difficulty comes from image degradation (SSIM). Until it is recalibrated from `responses.jsonl` with real normative data, percentiles are not clinically validated.
-- **Vision results are noisy with few items.** With 6 items the ability estimate's SE is about 0.9, so a perfect run tops out around the 85–88th percentile.
+- **Vision results are coarse with few items.** With 6 items the ability estimate's SE is about 0.7–0.9. With 6 items the score moves in coarse steps: in simulation, a perfect run lands around the 95th percentile and 4/6 correct around the 27th.
 - **Video was validated only on synthetic clips** made from a still photo. Thresholds (head turn 10°, nod 8°, blink, hold 0.4 s), eye-only gaze, `look_up`/`look_down`, the hand actions and the `mirrored` default all still need checking on real webcam recordings.

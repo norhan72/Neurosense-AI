@@ -18,7 +18,6 @@ import random
 import threading
 import uuid
 from datetime import datetime, timezone
-from math import erf, sqrt
 from pathlib import Path
 
 import numpy as np
@@ -42,13 +41,17 @@ SYMPTOMS = {
     "desaturation": ("Colour vision loss (dyschromatopsia)", "فقدان رؤية الألوان"),
 }
 
-# Percentile lower bound -> (label_en, label_ar), checked from the top.
+# Normal-reference percentile lower bound -> (label_en, label_ar), checked from
+# the top.  The percentile is exact for the answered item set (see
+# `normal_reference_percentile`), so e.g. 5 means "5% of normal observers
+# would score lower on these items".
 BANDS = (
-    (25.0, "Normal", "طبيعي"),
-    (10.0, "Borderline", "حدّي"),
-    (3.0, "Mild impairment", "ضعف خفيف"),
+    (15.0, "Normal", "طبيعي"),
+    (5.0, "Borderline", "حدّي"),
+    (1.0, "Mild impairment", "ضعف خفيف"),
     (0.0, "Significant impairment", "ضعف ملحوظ"),
 )
+PRIOR_WEIGHTS = np.exp(LOG_PRIOR) / np.exp(LOG_PRIOR).sum()
 
 NOTE_EN = (
     "This is a screening aid, not a diagnosis. Results are based on model-based "
@@ -171,22 +174,50 @@ def select_exercises(count: int = DEFAULT_COUNT, rng: random.Random | None = Non
 # --------------------------------------------------------------------------- #
 # Scoring
 # --------------------------------------------------------------------------- #
-def _phi(x: float) -> float:
-    """Standard normal CDF."""
-    return 0.5 * (1.0 + erf(x / sqrt(2.0)))
+def _p_correct(items: list[dict]) -> np.ndarray:
+    """3PL probability of a correct answer, shape (n_items, len(THETA_GRID))."""
+    a = np.array([it["a"] for it in items], dtype=float)[:, None]
+    b = np.array([it["b"] for it in items], dtype=float)[:, None]
+    c = np.array([it["c"] for it in items], dtype=float)[:, None]
+    return c + (1 - c) / (1 + np.exp(-a * (THETA_GRID - b)))
 
 
 def estimate_theta(items: list[dict], correct: list[bool]) -> tuple[float, float]:
     """EAP estimate and posterior SD of ability under the 3PL model."""
-    log_post = LOG_PRIOR.copy()
-    for it, ok in zip(items, correct):
-        p = it["c"] + (1 - it["c"]) / (1 + np.exp(-it["a"] * (THETA_GRID - it["b"])))
-        log_post += np.log(p if ok else 1 - p)
+    p = _p_correct(items)
+    ok = np.asarray(correct, dtype=bool)[:, None]
+    log_post = LOG_PRIOR + np.where(ok, np.log(p), np.log(1 - p)).sum(axis=0)
     post = np.exp(log_post - log_post.max())
     post /= post.sum()
     theta = float((THETA_GRID * post).sum())
     se = float(np.sqrt((post * (THETA_GRID - theta) ** 2).sum()))
     return theta, se
+
+
+def normal_reference_percentile(items: list[dict], theta: float) -> float:
+    """Exact percentile of `theta` among normal observers (theta ~ N(0, 1))
+    answering the same items.
+
+    EAP estimates from 5-7 items are shrunk toward the prior, so Phi(theta) is
+    not a real percentile.  Instead every response pattern (2**n, n <= 10) is
+    enumerated with its probability under the normal population and its own
+    EAP estimate; ties count half (mid-rank).
+    """
+    n = len(items)
+    log_p = np.log(_p_correct(items))
+    log_q = np.log(1 - np.exp(log_p))
+    patterns = ((np.arange(2**n)[:, None] >> np.arange(n)) & 1).astype(float)  # (2**n, n)
+    log_lik = patterns @ log_p + (1 - patterns) @ log_q  # (2**n, grid)
+
+    log_joint = log_lik + LOG_PRIOR
+    w = np.exp(log_joint - log_joint.max(axis=1, keepdims=True))
+    theta_hat = (w * THETA_GRID).sum(axis=1) / w.sum(axis=1)
+    pattern_prob = np.exp(log_lik) @ PRIOR_WEIGHTS
+
+    tol = 1e-6
+    below = pattern_prob[theta_hat < theta - tol].sum()
+    ties = pattern_prob[np.abs(theta_hat - theta) <= tol].sum()
+    return float(100.0 * (below + 0.5 * ties) / pattern_prob.sum())
 
 
 def _band(percentile: float) -> tuple[str, str]:
@@ -233,7 +264,7 @@ def evaluate(answers: list[dict]) -> dict:
     items = [ds.items[i] for i in ids]
     correct = [a["answer"] == it["class"] for a, it in zip(answers, items)]
     theta, se = estimate_theta(items, correct)
-    percentile = round(_phi(theta) * 100, 1)
+    percentile = round(normal_reference_percentile(items, theta), 1)
     label_en, label_ar = _band(percentile)
     num_correct = sum(correct)
 
