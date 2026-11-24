@@ -9,14 +9,19 @@ test = MotionTest()
 
 @router.post("/analyze")
 async def answer(request: Request):
-    body = await request.json()
+    try:
+        body = await request.json()
+    except ValueError:
+        return JSONResponse({"error": "invalid JSON body"}, status_code=400)
+
     # accept either { samples: [...] } or direct list
     samples = body.get("samples") if isinstance(body, dict) else body
-    if samples is None:
+    if not samples:
         return JSONResponse({"error": "no samples provided"}, status_code=400)
 
     try:
-        result = test.analyze_samples(samples)
-        return JSONResponse(result)
+        return JSONResponse(test.analyze_samples(samples))
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)

@@ -1,15 +1,20 @@
-scikit-learn
-opencv-python
-numpy
-pandas
-matplotlib
-pyngrok
-streamlit
-librosa
-google-cloud-speech
-joblib
 fastapi[standard]
 pydantic
+numpy
+scipy
+
+# Vision + video analysis.
+# opencv-contrib-python (not opencv-python): mediapipe depends on it and both
+# packages ship the same `cv2` module, so installing both breaks imports.
+opencv-contrib-python
+mediapipe
+
+# Suspended tests (motion, speech): kept so they can be re-enabled.
+scikit-learn
+pandas
+joblib
+librosa
+soundfile
 praat-parselmouth
 faster-whisper
-ffmpeg-python
+matplotlib

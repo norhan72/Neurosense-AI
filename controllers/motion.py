@@ -9,6 +9,32 @@ from sklearn.svm import OneClassSVM
 from sklearn.preprocessing import RobustScaler
 
 
+DEFAULT_SAMPLE_RATE_HZ = 50.0
+MIN_SAMPLES = 15
+
+FEATURE_NAMES = [
+    "std_ax",
+    "std_ay",
+    "std_az",
+    "rms_accel",
+    "std_alpha",
+    "std_beta",
+    "std_gamma",
+    "rms_gyro",
+    "mean_abs_ax",
+    "mean_abs_ay",
+    "sma",
+    "ptp_accel_mag",
+    "dom_freq_accel",
+    "jerk_accel",
+    "jerk_gyro",
+    "entropy_accel",
+    "entropy_gyro",
+    "zcr_accel",
+    "zcr_gyro",
+]
+
+
 class MotionTest:
     def __init__(self, contamination=0.09, random_seed=42):
         self.data_folder = os.path.join(os.getcwd(), "data", "motion")
@@ -17,20 +43,50 @@ class MotionTest:
         self.pipeline = {}
         self._train()
 
-    def _jerk(self, signal, t):
+    # ---------- feature helpers ----------
+
+    @staticmethod
+    def _time_seconds(t):
+        """Return timestamps in seconds, or None if they are unusable.
+
+        Browsers send `t` in milliseconds; detect that from the median step.
+        """
+        if len(t) < 2 or not np.all(np.isfinite(t)):
+            return None
+        if np.median(np.diff(t)) > 1.0:
+            t = t / 1000.0
+        return t
+
+    @staticmethod
+    def _jerk(signal, t):
         if len(signal) < 3:
             return 0.0
-        dt = np.diff(t)
-        dt[dt <= 0] = np.median(dt[dt > 0]) if np.any(dt > 0) else 0.02
+        if t is None:
+            dt = np.full(len(signal) - 1, 1.0 / DEFAULT_SAMPLE_RATE_HZ)
+        else:
+            dt = np.diff(t)
+            positive = dt[dt > 0]
+            dt[dt <= 0] = (
+                np.median(positive) if positive.size else 1.0 / DEFAULT_SAMPLE_RATE_HZ
+            )
         return float(np.mean(np.abs(np.diff(signal) / dt)))
 
-    def _entropy(self, v):
-        hist, _ = np.histogram(v, bins=20, density=True)
-        hist = hist[hist > 0]
-        return float(-np.sum(hist * np.log(hist)))
+    @staticmethod
+    def _entropy(v):
+        """Shannon entropy of the value distribution (20-bin histogram)."""
+        if len(v) == 0:
+            return 0.0
+        counts, _ = np.histogram(v, bins=20)
+        p = counts[counts > 0] / counts.sum()
+        return float(-np.sum(p * np.log(p)))
 
-    def _zcr(self, v):
-        return float(((v[:-1] * v[1:]) < 0).mean())
+    @staticmethod
+    def _zcr(v):
+        """Zero-crossing rate around the mean (magnitudes are always >= 0)."""
+        if len(v) < 2:
+            return 0.0
+        centered = v - np.mean(v)
+        return float(((centered[:-1] * centered[1:]) < 0).mean())
 
     @staticmethod
     def _std(v):
@@ -60,30 +116,18 @@ class MotionTest:
     def _dominant_freq(v, t):
         if len(v) < 4:
             return 0.0
-        if np.all(np.isfinite(t)) and len(t) > 1:
+        fs = DEFAULT_SAMPLE_RATE_HZ
+        if t is not None:
             dt = np.median(np.diff(t))
-            if dt > 1.0:
-                dt = dt / 1000.0
-            if dt <= 0:
-                fs = 50.0
-            else:
+            if dt > 0:
                 fs = 1.0 / dt
-        else:
-            fs = 50.0
-        sig = v - np.mean(v)
-        try:
-            fft = np.fft.rfft(sig)
-            freqs = np.fft.rfftfreq(len(sig), 1.0 / fs)
-            mag = np.abs(fft)
-            if mag.size <= 1:
-                return 0.0
-            idx = np.argmax(mag[1:]) + 1
-            return float(freqs[idx])
-        except Exception:
+        mag = np.abs(np.fft.rfft(v - np.mean(v)))
+        if mag.size <= 1:
             return 0.0
+        freqs = np.fft.rfftfreq(len(v), 1.0 / fs)
+        return float(freqs[np.argmax(mag[1:]) + 1])
 
     def _extract_features(self, samples):
-        # Extract raw channels
         ax = np.array([s.get("ax", s.get("x", 0)) for s in samples], dtype=float)
         ay = np.array([s.get("ay", s.get("y", 0)) for s in samples], dtype=float)
         az = np.array([s.get("az", s.get("z", 0)) for s in samples], dtype=float)
@@ -92,9 +136,11 @@ class MotionTest:
         beta = np.array([s.get("beta", 0) for s in samples], dtype=float)
         gamma = np.array([s.get("gamma", 0) for s in samples], dtype=float)
 
-        t = np.array([s.get("t", s.get("time", np.nan)) for s in samples], dtype=float)
+        t_raw = np.array(
+            [s.get("t", s.get("time", np.nan)) for s in samples], dtype=float
+        )
+        t = self._time_seconds(t_raw)
 
-        # Magnitudes
         accel_mag = np.sqrt(ax**2 + ay**2 + az**2)
         gyro_mag = np.sqrt(alpha**2 + beta**2 + gamma**2)
 
@@ -112,48 +158,18 @@ class MotionTest:
             "sma": self._sma(ax, ay, az),
             "ptp_accel_mag": self._peak_to_peak(accel_mag),
             "dom_freq_accel": self._dominant_freq(accel_mag, t),
+            "jerk_accel": self._jerk(accel_mag, t),
+            "jerk_gyro": self._jerk(gyro_mag, t),
+            "entropy_accel": self._entropy(accel_mag),
+            "entropy_gyro": self._entropy(gyro_mag),
+            "zcr_accel": self._zcr(accel_mag),
+            "zcr_gyro": self._zcr(gyro_mag),
         }
 
-        features.update(
-            {
-                "jerk_accel": self._jerk(accel_mag, t),
-                "jerk_gyro": self._jerk(gyro_mag, t),
-                "entropy_accel": self._entropy(accel_mag),
-                "entropy_gyro": self._entropy(gyro_mag),
-                "zcr_accel": self._zcr(accel_mag),
-                "zcr_gyro": self._zcr(gyro_mag),
-            }
-        )
+        vec = np.array([features[name] for name in FEATURE_NAMES], dtype=float)
+        return features, vec.reshape(1, -1)
 
-        # Feature vector (keep stable order!)
-        vec = np.array(
-            [
-                # original features
-                features["std_ax"],
-                features["std_ay"],
-                features["std_az"],
-                features["rms_accel"],
-                features["std_alpha"],
-                features["std_beta"],
-                features["std_gamma"],
-                features["rms_gyro"],
-                features["mean_abs_ax"],
-                features["mean_abs_ay"],
-                features["sma"],
-                features["ptp_accel_mag"],
-                features["dom_freq_accel"],
-                # new features
-                features["jerk_accel"],
-                features["jerk_gyro"],
-                features["entropy_accel"],
-                features["entropy_gyro"],
-                features["zcr_accel"],
-                features["zcr_gyro"],
-            ],
-            dtype=float,
-        ).reshape(1, -1)
-
-        return features, vec
+    # ---------- training ----------
 
     def _load_data(self):
         files = sorted(glob.glob(os.path.join(self.data_folder, "*.json")))
@@ -167,146 +183,117 @@ class MotionTest:
             try:
                 with open(fp, "r", encoding="utf-8") as fh:
                     data = json.load(fh)
-            except Exception:
-                # skip unreadable files but continue
+            except (OSError, ValueError):
                 continue
-
+            if not isinstance(data, list) or len(data) < MIN_SAMPLES:
+                continue
             _, vec = self._extract_features(data)
             vecs.append(vec.ravel())
 
         if not vecs:
             raise ValueError(
-                f"No valid sample segments found in {self.data_folder} (need >=15 samples each)"
+                f"No valid recordings in {self.data_folder} "
+                f"(each needs >= {MIN_SAMPLES} samples)"
             )
 
         X = np.vstack(vecs)
-        self.pipeline["X_raw"] = X
-
         scaler = RobustScaler()
-        self.pipeline["scaler"] = scaler
-
         Xs = scaler.fit_transform(X)
-        self.pipeline["X_scaled"] = Xs
 
-        self.pipeline["feature_names"] = [
-            "std_ax",
-            "std_ay",
-            "std_az",
-            "rms_accel",
-            "std_alpha",
-            "std_beta",
-            "std_gamma",
-            "rms_gyro",
-            "mean_abs_ax",
-            "mean_abs_ay",
-            "sma",
-            "ptp_accel_mag",
-            "dom_freq_accel",
-            "jerk_accel",
-            "jerk_gyro",
-            "entropy_accel",
-            "entropy_gyro",
-            "zcr_accel",
-            "zcr_gyro",
-        ]
+        self.pipeline["X_raw"] = X
+        self.pipeline["scaler"] = scaler
+        self.pipeline["X_scaled"] = Xs
+        self.pipeline["feature_names"] = FEATURE_NAMES
         return Xs
 
-    def _get_best_model(self, results):
-        # choose model with lowest median anomaly score (on training normals)
-        best = None
-        best_med = None
-        for name, info in results.items():
-            med = float(np.median(info["scores"]))
-            if best is None or med < best_med:
-                best = name
-                best_med = med
-        return best, best_med
+    @staticmethod
+    def _get_best_model(results):
+        """Pick the model with the lowest median anomaly score on the training normals."""
+        return min(results, key=lambda name: float(np.median(results[name]["scores"])))
 
     def _train(self):
-        # TODO: load saved model if exists
         X = self._load_data()
+        n_neighbors = max(2, min(20, len(X) - 1))
+
+        models = {
+            "iforest": IsolationForest(
+                n_estimators=300,
+                contamination=self.contamination,
+                random_state=self.random_seed,
+            ),
+            "lof": LocalOutlierFactor(n_neighbors=n_neighbors, novelty=True),
+            "ocsvm": OneClassSVM(kernel="rbf", gamma="scale", nu=0.02),
+        }
+
         results = {}
-        iso = IsolationForest(
-            n_estimators=300,
-            contamination=self.contamination,
-            random_state=self.random_seed,
-        )
-        iso.fit(X)
-        iso_scores = -iso.decision_function(X)
-        results["iforest"] = dict(model=iso, scores=iso_scores)
+        for name, model in models.items():
+            model.fit(X)
+            results[name] = dict(model=model, scores=-model.decision_function(X))
 
-        lof = LocalOutlierFactor(n_neighbors=20, novelty=True)
-        lof.fit(X)
-        lof_scores = -lof.decision_function(X)
-        results["lof"] = dict(model=lof, scores=lof_scores)
+        best = self._get_best_model(results)
+        self.pipeline["model_name"] = best
+        self.pipeline["model"] = results[best]["model"]
+        # Keep the full training score distribution; it is the reference for 0..100 scaling.
+        self.pipeline["train_scores"] = np.asarray(results[best]["scores"], dtype=float)
 
-        # One-Class SVM
-        ocsvm = OneClassSVM(kernel="rbf", gamma="scale", nu=0.02)
-        ocsvm.fit(X)
-        ocsvm_scores = -ocsvm.decision_function(X)
-        results["ocsvm"] = dict(model=ocsvm, scores=ocsvm_scores)
+    # ---------- inference ----------
 
-        # TODO: save best model
-        best_model, best_score = self._get_best_model(results)
-        self.pipeline["model"] = results[best_model]["model"]
-        self.pipeline["train_scores"] = best_score
-
-    def _get_interpretation(self, score, lang="en"):
+    @staticmethod
+    def _get_interpretation(likelihood, lang="en"):
+        """Map the 0..100 likelihood to a label."""
         if lang == "ar":
-            if score < 20:
+            if likelihood < 20:
                 return "من غير المحتمل أن يكون لديك MS"
-            elif score < 50:
+            if likelihood < 50:
                 return "احتمال متوسط للإصابة بمرض MS"
-            elif score < 70:
+            if likelihood < 70:
                 return "من المحتمل أن يكون لديك MS"
-            else:
-                return "من المرجح أن يكون لديك MS"
-        else:
-            if score < 20:
-                return "Unlikely to have MS"
-            elif score < 50:
-                return "Moderate likelihood of MS"
-            elif score < 70:
-                return "Likely to have MS"
-            else:
-                return "Highly likely to have MS"
+            return "من المرجح أن يكون لديك MS"
+
+        if likelihood < 20:
+            return "Unlikely to have MS"
+        if likelihood < 50:
+            return "Moderate likelihood of MS"
+        if likelihood < 70:
+            return "Likely to have MS"
+        return "Highly likely to have MS"
 
     def analyze_samples(self, samples):
+        if not isinstance(samples, list) or len(samples) < MIN_SAMPLES:
+            raise ValueError(f"samples must be a list of at least {MIN_SAMPLES} readings")
+
         features, vec = self._extract_features(samples)
         scaler = self.pipeline["scaler"]
         model = self.pipeline["model"]
         train_scores = self.pipeline["train_scores"]
 
-        vecs = scaler.transform(vec)
-        score = -model.decision_function(vecs)[0]
+        score = float(-model.decision_function(scaler.transform(vec))[0])
 
-        # Map score to 0..100 using training distribution: treat min..95th percentile as 0..100
+        # Map score to 0..100 using the training distribution: min..95th percentile -> 0..100
         ref_min = float(np.min(train_scores))
         ref_high = float(np.percentile(train_scores, 95))
+        span = ref_high - ref_min if ref_high > ref_min else 1.0
+        ms_likelihood = float(np.clip((score - ref_min) / span * 100.0, 0, 100))
 
-        if ref_high <= ref_min:
-            ms_likelihood = float(np.clip((score - ref_min) * 100.0, 0, 100))
-        else:
-            ms_likelihood = float(
-                np.clip((score - ref_min) / (ref_high - ref_min) * 100.0, 0, 100)
-            )
-
-        result = {
+        return {
             "ms_likelihood": ms_likelihood,
             "features": features,
-            "score": float(score),
-            "label_en": self._get_interpretation(score),
-            "label_ar": self._get_interpretation(score, "ar"),
+            "score": score,
+            "label_en": self._get_interpretation(ms_likelihood),
+            "label_ar": self._get_interpretation(ms_likelihood, "ar"),
         }
-        return result
+
+    # ---------- persistence ----------
 
     def save(self, path="model"):
         os.makedirs(path, exist_ok=True)
-        joblib.dump(self.pipeline, f"{path}/pipeline.pkl")
+        joblib.dump(self.pipeline, os.path.join(path, "pipeline.pkl"))
 
-
-@classmethod
-def load(cls, path="model"):
-    obj = cls.__new__(cls)
-    obj.pipeline = joblib.load(f"{path}/pipeline.pkl")
-    return obj
+    @classmethod
+    def load(cls, path="model", contamination=0.09, random_seed=42):
+        obj = cls.__new__(cls)
+        obj.data_folder = os.path.join(os.getcwd(), "data", "motion")
+        obj.contamination = contamination
+        obj.random_seed = random_seed
+        obj.pipeline = joblib.load(os.path.join(path, "pipeline.pkl"))
+        return obj
