@@ -13,6 +13,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from routes.results_routes import router as results_router
+from routes.sensor_routes import router as sensor_router
+from routes.survey_routes import router as survey_router
 from routes.video_analysis_routes import router as video_router
 from routes.vision_routes import router as vision_router
 
@@ -40,8 +43,11 @@ app.add_middleware(
 )
 
 # --- API routers -------------------------------------------------------------
+app.include_router(survey_router, prefix="/api/survey", tags=["Survey"])
 app.include_router(vision_router, prefix="/api/vision", tags=["Vision Test"])
 app.include_router(video_router, prefix="/api/video", tags=["Video Analysis"])
+app.include_router(sensor_router, prefix="/api/sensors", tags=["Sensor Tests"])
+app.include_router(results_router, prefix="/api/results", tags=["Combined Result"])
 
 # Motion test is SUSPENDED but kept registered when its training data exists:
 # MotionTest trains on data/motion/*.json at import time.
